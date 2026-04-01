@@ -1,0 +1,14 @@
+{
+  "name": "filament-inventory",
+  "private": true,
+  "description": "Inventory markdown → Spoolman JSON → API",
+  "scripts": {
+    "inventory:migrate": "node scripts/migrate-from-md.mjs",
+    "spoolman:push": "node scripts/export-to-spoolman.mjs",
+    "spoolman:reload": "node scripts/spoolman-cleanup.mjs --all --apply && node scripts/export-to-spoolman.mjs",
+    "spoolman:cleanup": "node scripts/spoolman-cleanup.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

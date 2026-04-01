@@ -1,0 +1,56 @@
+---
+description: Amazon filament inventory markdown — table schema, naming, pricing, and order reconciliation
+globs: data/filament-inventory.md
+alwaysApply: false
+---
+
+# Filament inventory (`data/filament-inventory.md`)
+
+When creating or updating this file from Amazon orders, follow these conventions so results match the existing inventory.
+
+## Table columns (fixed order)
+
+`Product name | Manufacturer | Item name | Type | Color | Weight (unit) | Extruder (°C) | Bed (°C) | Unit price (USD) | Qty | Order status | Order ID | Order placed`
+
+- **Product name:** Verbatim (or near-verbatim) Amazon listing title per row. Never strip it for “cleanliness.”
+- **Manufacturer:** Brand from the listing / storefront. Use **—** only when the product line does not name a brand (fill later from the order or spool).
+- **Item name:** Exactly **`{Manufacturer} {Type} {Color} {Weight (unit)}`** with single spaces. **Weight** must match **Weight (unit)**. Duplicates across rows are OK; **Order ID** + **Qty** distinguish shipments. If Manufacturer is **—**, item name starts with **`—`** (e.g. `— PLA Light Gray 1 kg`).
+- **Order ID:** Inventory is **order-based**: every row that should sync to Spoolman must carry the **Amazon order id** copied from **Your orders → Order details** (`113-…` / `111-…` etc.). Do **not** leave rows **“unlinked”** once reconciliation is done—no **—**, no synthetic placeholders (`UNLINKED-…`), and no wrong order id. If you open **Order details** and the line items don’t match the filament row, **find the correct order** (order history, purchase email, product page) and fix **Order ID**; document one-off issues in **Notes**.
+- **Type / Color / Weight:** Drive **Item name**; keep **Type** values consistent (`PLA`, `PLA+`, `PLA Pro`, `PETG`, `PLA Silk`, `TPU`, `ASA`, `ABS+`, `ABS-GF`, etc.).
+- **Extruder (°C) / Bed (°C):** Recommended ranges from the Amazon product page or manufacturer site (e.g. `190–220`, `50–60`). Use an en dash between min and max.
+
+## Pricing (unit price column)
+
+- Prefer **Amazon line-item subtotal** ÷ **logical spools** after pack splits (document split in parentheses, e.g. `*(17.99÷2)*`, `*(55.99÷4)*`).
+- Do **not** allocate promos, Subscribe & Save, coupons, or shipping into per-spool price unless the user asks.
+- Note **$0**, **refund**, or **full refund** in **Order status** when the order page shows it; list-line math may still be shown for reference.
+
+## Pack splitting (inventory rows)
+
+- **B&W / B&G 2-color carton (e.g. SUNLU 2 kg):** One purchased unit → one row per color at **1 kg** each (or listed fraction); unit price = line price ÷ **2** per color row.
+- **4×500 g refills:** One unit → four rows or equivalent **Qty** logic; unit price = line price ÷ **4** per 500g spool.
+- **Multi-k listings:** If the **image/qty** shows **4×1 kg** but the title says “1KG,” trust the **actual spool count** (e.g. iSANMATE TPU): four **1 kg** rows per color set, priced line ÷ 4.
+- **“10 kg” bundles:** Default **10 × 1 kg** unless listing says otherwise (e.g. JAYO “11 kg” = **10 × 1.1 kg**, **Qty 10**).
+
+## Amazon reconciliation
+
+- Open **order details** to confirm **line items, quantities, subtotals**, not only titles.
+- If **Order ID** points to the **wrong** order (e.g. silica-only order), do **not** treat **—** as the final state: **locate the real Amazon order** for that purchase, set **Order ID** to that id, and add a **Notes** bullet (what was wrong before). Only while actively fixing may a row briefly lack an id—**—** blocks `spoolman:push` until replaced with a real order id (or the row is removed from the table).
+- **500g PETG “4 rolls”** with line qty **3** → table often uses **12** spool rows (3 cartons × 4 rolls).
+
+## Intro + Notes
+
+- Keep short definitions at the top: **Pricing**, **Manufacturer**, **Item name**, **Splitting rules** bullets.
+- Use **Notes** for one-off caveats (wrong order link, imputed splits, $0 vs net cost). Do not duplicate the whole methodology there.
+
+## Sync to Spoolman (after changing this file)
+
+- `npm run inventory:migrate` — writes `data/spoolman/*.json` from `data/filament-inventory.md`. Each spool in JSON gets Spoolman extra **`amazon_order_id`** when **Order ID** is set (required for push).
+- **`Order ID`:** Must be the **verified** Amazon order id on every row you push (same id as in the **Order details** URL). **—** or non-Amazon placeholders break `spoolman:push`; the table should not stay in an unlinked state once reconciled.
+- `npm run spoolman:push` — ensures vendors/filaments exist; **spools are incremental**: creates only spools missing for each `(filament, amazon_order_id)` count. Re-running after the same JSON does not duplicate spools. Existing spools without `amazon_order_id` are invisible to that logic—see below.
+- `npm run spoolman:reload` — deletes **all** Spoolman spools, filaments, and vendors, then **POST**s from JSON (catalog must match files exactly; loses weights/history not in JSON). **Once after upgrading** to `amazon_order_id` on spools: run **migrate**, then **reload**, so all live spools carry the extra; later pushes stay incremental.
+
+## Edits
+
+- Match existing markdown style; avoid drive-by refactors or new docs unless asked.
+- Prefer **absolute paths** when tooling this repo on Windows.
