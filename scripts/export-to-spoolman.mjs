@@ -19,7 +19,7 @@ import { requireSpoolmanBase } from "../lib/spoolman-client.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-loadDotEnv(join(__dirname, "..", ".env"));
+loadDotEnv();
 
 function parseDirArg() {
   let dir = join(__dirname, "..", "data", "spoolman");

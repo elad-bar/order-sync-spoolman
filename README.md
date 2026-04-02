@@ -6,7 +6,7 @@ Small Node.js tooling that keeps a **human-editable Amazon filament purchase log
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) **20+** — runs the migrate and Spoolman scripts.
+- [Node.js](https://nodejs.org/) **20+** — ensure **`node`** and **`npm`** work in the terminal you use (installer option **“Add to PATH”**, or add **`C:\Program Files\nodejs`** to your user **PATH** yourself). On **Windows PowerShell**, if **`npm`** fails with *npm.ps1 cannot be loaded… running scripts is disabled*, that is **execution policy** blocking the PowerShell shim: run **`npm.cmd run …`** instead (batch file, not a script), use **Command Prompt** for that terminal, or relax policy for your user (see [about_Execution_Policies](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_execution_policies)). None of this is specific to this repo—it is how Node on Windows interacts with PowerShell.
 - **[Cursor](https://cursor.com/)** (recommended) — project rules under `.cursor/rules/` apply when you work on `data/filament-inventory.md`. Use **Cursor’s browser** (open Amazon order or product pages in a tab the agent can access) so details like line-item subtotals, quantities, recommended nozzle/bed temps, and listing copy can be reconciled with the table. That matches how the filament rule expects rows to be built (order details over title-only guesses). You can still edit the markdown in any editor; Cursor + browser is the supported path for fast, accurate Amazon pulls.
 
 ## Repository layout
@@ -22,7 +22,7 @@ Column order, item naming, pack splits, pricing, and reconciliation notes are de
 
 ## Configuration
 
-Copy **`.env.example`** to **`.env`** in the project root (`.env` is gitignored). Spoolman push scripts need a base URL:
+Env files are loaded with **[dotenv](https://github.com/motdotla/dotenv)** ([`lib/env.mjs`](lib/env.mjs)): **project root `.env`** first, else **`scripts/.env`**. Copy **[`scripts/.env.example`](scripts/.env.example)** to **`scripts/.env`** or use root **`.env`**. Spoolman push scripts need a base URL:
 
 ```env
 SPOOLMAN_URL=http://your-host:7912

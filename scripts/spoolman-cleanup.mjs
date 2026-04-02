@@ -29,7 +29,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-loadDotEnv(join(__dirname, "..", ".env"));
+loadDotEnv();
 
 function parseArgs(argv) {
   let dir = join(__dirname, "..", "data", "spoolman");
@@ -50,7 +50,7 @@ function parseArgs(argv) {
 }
 
 function exportFilamentKey(vendorName, postName, weight) {
-  return `${vendorName}|${postName}|${weight}`;
+  return `${String(vendorName).toLowerCase()}|${postName}|${weight}`;
 }
 
 const base = requireSpoolmanBase();
@@ -75,7 +75,7 @@ if (all) {
 const vendorsJson = JSON.parse(await readFile(join(dir, "vendors.json"), "utf8"));
 const filamentsJson = JSON.parse(await readFile(join(dir, "filaments.json"), "utf8"));
 
-const expectedVendorNames = new Set(vendorsJson.map((v) => v.name));
+const expectedVendorNamesLower = new Set(vendorsJson.map((v) => String(v.name).toLowerCase()));
 const expectedFilamentKeys = new Set(
   filamentsJson.map((f) =>
     exportFilamentKey(f.vendor_key, f.post.name, f.post.weight),
@@ -142,7 +142,7 @@ const toDeleteVendors = [];
 for (const v of allVendors) {
   const fc = filamentCountByVendorId.get(v.id) ?? 0;
   if (fc > 0) continue;
-  if (expectedVendorNames.has(v.name)) continue;
+  if (expectedVendorNamesLower.has(String(v.name).toLowerCase())) continue;
   toDeleteVendors.push(v);
 }
 
