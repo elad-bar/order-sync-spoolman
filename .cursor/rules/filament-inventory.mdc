@@ -1,10 +1,10 @@
 ---
 description: Amazon filament inventory markdown — table schema, naming, pricing, and order reconciliation
-globs: data/filament-inventory.md
+globs: data/amazon-filament-inventory.md
 alwaysApply: false
 ---
 
-# Filament inventory (`data/filament-inventory.md`)
+# Filament inventory (`data/amazon-filament-inventory.md`)
 
 When creating or updating this file from Amazon orders, follow these conventions so results match the existing inventory.
 
@@ -45,10 +45,10 @@ When creating or updating this file from Amazon orders, follow these conventions
 
 ## Sync to Spoolman (after changing this file)
 
-- `npm run inventory:migrate` — writes `data/spoolman/*.json` from `data/filament-inventory.md`. Each spool in JSON gets Spoolman extra **`amazon_order_id`** when **Order ID** is set (required for push).
+- `npm run inventory:migrate` — writes **`data/inventory.json`** from this markdown (`INVENTORY-PLAN.md` describes the canonical shape). Each spool carries **`purchase.orderId`** for Spoolman extra **`amazon_order_id`** when **Order ID** is set (required for push).
 - **`Order ID`:** Must be the **verified** Amazon order id on every row you push (same id as in the **Order details** URL). **—** or non-Amazon placeholders break `spoolman:push`; the table should not stay in an unlinked state once reconciled.
-- `npm run spoolman:push` — ensures vendors/filaments exist; **spools are incremental**: creates only spools missing for each `(filament, amazon_order_id)` count. Re-running after the same JSON does not duplicate spools. Existing spools without `amazon_order_id` are invisible to that logic—see below.
-- `npm run spoolman:reload` — deletes **all** Spoolman spools, filaments, and vendors, then **POST**s from JSON (catalog must match files exactly; loses weights/history not in JSON). **Once after upgrading** to `amazon_order_id` on spools: run **migrate**, then **reload**, so all live spools carry the extra; later pushes stay incremental.
+- `npm run spoolman:push` — reads **`data/inventory.json`**; ensures vendors/filaments exist; **spools are incremental**: creates only spools missing for each `(filament, amazon_order_id)` count. Re-running after the same file does not duplicate spools. Existing spools without `amazon_order_id` are invisible to that logic—see below.
+- `npm run spoolman:reload` — deletes **all** Spoolman spools, filaments, and vendors, then **POST**s from **`inventory.json`** (catalog must match file; loses weights/history not represented). **Once after upgrading** spool extra fields: run **migrate**, then **reload**, so all live spools carry the extra; later pushes stay incremental.
 
 ## Edits
 
