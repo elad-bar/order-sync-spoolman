@@ -2,21 +2,30 @@
   "name": "filament-inventory",
   "private": true,
   "type": "module",
-  "description": "Inventory markdown → Spoolman JSON → API (root CLI: node cli.js)",
+  "description": "Inventory markdown → generic JSON → Spoolman or Bambuddy API (node main.js)",
   "bin": {
-    "filament-inventory": "./cli.js"
+    "filament-inventory": "./main.js"
   },
   "scripts": {
-    "cli": "node cli.js",
-    "inventory:migrate": "node cli.js migrate",
-    "spoolman:push": "node cli.js push",
-    "spoolman:reload": "node cli.js reload",
-    "spoolman:cleanup": "node cli.js cleanup"
+    "start": "node main.js",
+    "sync:bambuddy": "node main.js --sync --system bambuddy",
+    "sync:bambuddy:live": "node main.js --sync --execute --system bambuddy",
+    "inventory:migrate": "node main.js migrate",
+    "spoolman:push": "node main.js --sync",
+    "spoolman:reload": "node main.js --clean --sync --execute",
+    "spoolman:cleanup": "node main.js --clean",
+    "spoolman:cleanup:live": "node main.js --clean --execute",
+    "bambuddy:push": "node main.js --sync --system bambuddy",
+    "bambuddy:reload": "node main.js --clean --sync --execute --system bambuddy",
+    "bambuddy:cleanup": "node main.js --clean --system bambuddy",
+    "bambuddy:cleanup:live": "node main.js --clean --execute --system bambuddy"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "dotenv": "^16.4.7"
+    "bottleneck": "^2.19.5",
+    "dotenv": "^16.4.7",
+    "winston": "^3.19.0"
   }
 }

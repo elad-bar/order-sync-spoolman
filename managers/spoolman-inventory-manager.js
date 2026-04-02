@@ -1,6 +1,9 @@
 /**
  * Entire Spoolman domain: HTTP client, push from inventory.json, cleanup/nuke.
- * All behavior lives on {@link SpoolmanInventoryManager} (via cli.js push | cleanup | reload).
+ * All behavior lives on {@link SpoolmanInventoryManager} via main.js (`--system spoolman`).
+ *
+ * HTTP: shared read/write **Bottleneck** reservoirs on {@link BaseInventoryManager}; **429** retries and
+ * **X-RateLimit-** pacing match {@link BambuddyInventoryManager} (architecture §9–§10).
  */
 
 import { readFile } from "node:fs/promises";
@@ -22,23 +25,11 @@ const INVENTORY_JSON_PATH = join(__dirname, "..", "data", "inventory.json");
 
 export class SpoolmanInventoryManager extends BaseInventoryManager {
   constructor(options = {}) {
-    super(options);
+    super({ ...options, inventorySystem: "spoolman" });
   }
 
-  #getBase() {
-    const raw = this.options.baseUrl;
-    const base =
-      typeof raw === "string" ? raw.replace(/\/$/, "") : "";
-    if (!base) {
-      console.error(
-        "Spoolman base URL missing: pass baseUrl in options (e.g. from SPOOLMAN_URL in project .env when using cli.js).",
-      );
-      process.exit(2);
-    }
-    return base;
-  }
-
-  #httpHeaders(jsonBody = false) {
+  /** @param {boolean} [jsonBody] */
+  httpHeaders(jsonBody = false) {
     const h = {
       Accept: "application/json",
       ...(jsonBody ? { "Content-Type": "application/json" } : {}),
@@ -51,28 +42,12 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
     return h;
   }
 
-  async #api(method, path, body) {
-    const base = this.#getBase();
-    const url = `${base.replace(/\/$/, "")}${path}`;
-    const res = await fetch(url, {
-      method,
-      headers: this.#httpHeaders(body != null),
-      body: body != null ? JSON.stringify(body) : undefined,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new Error(`${method} ${url} -> ${res.status}: ${text}`);
-    }
-    if (!text) return null;
-    return JSON.parse(text);
-  }
-
   async #fetchPaged(resource) {
     const all = [];
     let offset = 0;
     const limit = 200;
     while (true) {
-      const chunk = await this.#api(
+      const chunk = await this.api(
         "GET",
         `/api/v1/${resource}?limit=${limit}&offset=${offset}`,
       );
@@ -125,24 +100,24 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
   }
 
   async #ensureFilamentExtraFieldDefinitions() {
-    const existing = await this.#api("GET", "/api/v1/field/filament");
+    const existing = await this.api("GET", "/api/v1/field/filament");
     if (!Array.isArray(existing)) return;
     const keys = new Set(existing.map((f) => f.key));
     for (const { key, body } of FILAMENT_EXTRA_FIELD_DEFINITIONS) {
       if (keys.has(key)) continue;
-      await this.#api("POST", `/api/v1/field/filament/${key}`, body);
-      console.log(`Registered filament extra field: ${key}`);
+      await this.api("POST", `/api/v1/field/filament/${key}`, body);
+      this._log.debug(`registered filament extra field: ${key}`);
     }
   }
 
   async #ensureSpoolExtraFieldDefinitions() {
-    const existing = await this.#api("GET", "/api/v1/field/spool");
+    const existing = await this.api("GET", "/api/v1/field/spool");
     if (!Array.isArray(existing)) return;
     const keys = new Set(existing.map((f) => f.key));
     for (const { key, body } of SPOOL_EXTRA_FIELD_DEFINITIONS) {
       if (keys.has(key)) continue;
-      await this.#api("POST", `/api/v1/field/spool/${key}`, body);
-      console.log(`Registered spool extra field: ${key}`);
+      await this.api("POST", `/api/v1/field/spool/${key}`, body);
+      this._log.debug(`registered spool extra field: ${key}`);
     }
   }
 
@@ -313,13 +288,13 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
       const key = v.id;
       let id = vendorNameToId.get(v.name) ?? vendorLowerToId.get(String(v.name).toLowerCase());
       if (id != null) {
-        console.log(`Vendor ${v.name} -> id ${id} (existing)`);
+        this._log.debug(`vendor ${v.name} -> id ${id} (existing)`);
       } else {
-        const created = await this.#api("POST", "/api/v1/vendor", this.#vendorBodyFromCanonical(v));
+        const created = await this.api("POST", "/api/v1/vendor", this.#vendorBodyFromCanonical(v));
         id = created.id;
         vendorNameToId.set(v.name, id);
         vendorLowerToId.set(String(v.name).toLowerCase(), id);
-        console.log(`Vendor ${v.name} -> id ${id}`);
+        this._log.debug(`vendor ${v.name} -> id ${id} (created)`);
       }
       vendorIdByKey.set(key, id);
     }
@@ -344,12 +319,12 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
       const dedupeKey = this.#filamentDedupeKey(vid, body.name, body.weight);
       let fid = filamentDedupe.get(dedupeKey);
       if (fid != null) {
-        console.log(`Filament ${body.name} -> id ${fid} (existing, skipped)`);
+        this._log.debug(`filament ${body.name} -> id ${fid} (existing)`);
       } else {
-        const created = await this.#api("POST", "/api/v1/filament", body);
+        const created = await this.api("POST", "/api/v1/filament", body);
         fid = created.id;
         filamentDedupe.set(dedupeKey, fid);
-        console.log(`Filament ${body.name} -> id ${fid}`);
+        this._log.debug(`filament ${body.name} -> id ${fid} (created)`);
       }
       filamentIdByKey.set(key, fid);
     }
@@ -385,16 +360,18 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
       const need = Math.max(0, count - have);
       if (need === 0) continue;
       const fid = filamentIdByKey.get(template._filament_key);
-      console.log(`Spools ${k}: creating ${need} (already ${have} on server, ${count} in JSON)`);
+      this._log.debug(
+        `spools ${k}: creating ${need} (server ${have}, desired ${count} in JSON)`,
+      );
       for (let i = 0; i < need; i++) {
         const body = { ...template.post };
         body.filament_id = fid;
-        await this.#api("POST", "/api/v1/spool", body);
+        await this.api("POST", "/api/v1/spool", body);
         spoolN++;
       }
     }
 
-    console.log(`Done: ${spoolN} spool(s) created.`);
+    this._log.info(`push done: ${spoolN} spool(s) created`);
     return { spoolN };
   }
 
@@ -404,26 +381,26 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
     const filamentById = new Map(filaments.map((f) => [f.id, f]));
 
     const vSorted = [...vendors].sort(byId);
-    console.log(`\n${tag} vendors (${vSorted.length}):`);
+    this._log.info(`${tag} vendors (${vSorted.length})`);
     for (const v of vSorted) {
-      console.log(`  id=${v.id}  name=${JSON.stringify(v.name ?? "")}`);
+      this._log.info(`  id=${v.id}  name=${JSON.stringify(v.name ?? "")}`);
     }
 
     const fSorted = [...filaments].sort(byId);
-    console.log(`\n${tag} filaments (${fSorted.length}):`);
+    this._log.info(`${tag} filaments (${fSorted.length})`);
     for (const f of fSorted) {
       const vn = f.vendor?.name;
       const vendorBit =
         vn != null
           ? `vendor=${JSON.stringify(vn)}`
           : `vendor_id=${f.vendor_id ?? "?"}`;
-      console.log(
+      this._log.info(
         `  id=${f.id}  name=${JSON.stringify(f.name ?? "")}  weight=${f.weight ?? "?"}g  ${vendorBit}`,
       );
     }
 
     const sSorted = [...spools].sort(byId);
-    console.log(`\n${tag} spools (${sSorted.length}):`);
+    this._log.info(`${tag} spools (${sSorted.length})`);
     for (const s of sSorted) {
       const fid =
         typeof s.filament_id === "number"
@@ -431,7 +408,7 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
           : s.filament?.id ?? "?";
       const meta = s.filament?.name ?? filamentById.get(Number(fid))?.name;
       const metaBit = meta != null ? `  ${JSON.stringify(meta)}` : "";
-      console.log(`  id=${s.id}  filament_id=${fid}${metaBit}`);
+      this._log.info(`  id=${s.id}  filament_id=${fid}${metaBit}`);
     }
   }
 
@@ -440,8 +417,8 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
     const filaments = await this.#fetchPaged("filament");
     const vendors = await this.#fetchPaged("vendor");
 
-    console.log(
-      `Spoolman nuke ${apply ? "apply" : "preview"}: ${spools.length} spool(s), ${filaments.length} filament(s), ${vendors.length} vendor(s)`,
+    this._log.info(
+      `cleanup ${apply ? "apply" : "dry-run"}: ${spools.length} spool(s), ${filaments.length} filament(s), ${vendors.length} vendor(s)`,
     );
 
     this.#logNukeBreakdown(vendors, filaments, spools, apply);
@@ -450,56 +427,52 @@ export class SpoolmanInventoryManager extends BaseInventoryManager {
       return { spools: spools.length, filaments: filaments.length, vendors: vendors.length };
     }
 
+    const delTotal =
+      spools.length + filaments.length + vendors.length;
+    const hb = this.phaseHeartbeat("cleanup: Spoolman DELETE", delTotal);
+
     for (const s of spools) {
-      await this.#api("DELETE", `/api/v1/spool/${s.id}`);
+      await this.api("DELETE", `/api/v1/spool/${s.id}`);
+      hb.bump();
     }
     for (const f of filaments) {
-      await this.#api("DELETE", `/api/v1/filament/${f.id}`);
+      await this.api("DELETE", `/api/v1/filament/${f.id}`);
+      hb.bump();
     }
     for (const v of vendors) {
-      await this.#api("DELETE", `/api/v1/vendor/${v.id}`);
+      await this.api("DELETE", `/api/v1/vendor/${v.id}`);
+      hb.bump();
     }
+    hb.end();
 
-    console.log("Nuke complete (all spools, filaments, vendors deleted).");
+    this._log.info("cleanup apply: all spools, filaments, vendors deleted");
     return { spools: spools.length, filaments: filaments.length, vendors: vendors.length };
   }
 
   async #runCleanupLogic(opts) {
     const { apply } = opts;
-    console.log(
+    this._log.info(
       apply
-        ? "Mode: APPLY (delete all spools, filaments, vendors)"
-        : "Mode: dry-run (list below; pass --apply to delete)",
+        ? "cleanup mode: apply (delete all spools, filaments, vendors)"
+        : "cleanup mode: dry-run (list below; pass --apply to delete)",
     );
     if (!apply) {
       await this.#nukeSpoolmanData({ apply: false });
-      console.log("\nPass --apply to wipe the instance.");
+      this._log.info("pass --apply to wipe the instance");
       return;
     }
     await this.#nukeSpoolmanData({ apply: true });
-    console.log("Done.");
+    this._log.info("cleanup finished");
   }
 
-  #parseCleanupArgs(argv) {
-    let apply = false;
-    for (let i = 0; i < argv.length; i++) {
-      if (argv[i] === "--apply") {
-        apply = true;
-      } else if (argv[i] === "--dry-run") {
-        apply = false;
-      }
-    }
-    return { apply };
-  }
-
-  async push(_argv = []) {
-    this.#getBase();
+  async push() {
+    this.getBaseUrl();
     await this.#importFromInventory(INVENTORY_JSON_PATH);
   }
 
-  async cleanup(argv = []) {
-    this.#getBase();
-    const opts = this.#parseCleanupArgs(argv);
-    await this.#runCleanupLogic(opts);
+  async cleanup() {
+    this.getBaseUrl();
+    const apply = !this.options.dryRun;
+    await this.#runCleanupLogic({ apply });
   }
 }

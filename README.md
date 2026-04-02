@@ -1,99 +1,51 @@
 # Filament inventory
 
-Small Node.js tooling that keeps a **human-editable Amazon filament purchase log** in sync with **[Spoolman](https://github.com/Donkie/Spoolman)** (3D printing filament and spool inventory).
+Sync a **markdown purchase log** in this repo with **[Spoolman](https://github.com/Donkie/Spoolman)** or **[Bambuddy](https://github.com/maziggy/bambuddy)**.
 
-**What you get:** You keep one place—a table in this repo—with **what you bought**, **how much**, **temps**, and **order info**. The tool **turns that table into data Spoolman understands** and **updates your Spoolman catalog** so what you see in the app matches what’s on your shelf (without re-entering every spool by hand).
+## Requirements
 
-## Prerequisites
+- **[Cursor](https://cursor.com/)** — open this repo as the workspace root and enable **project rules** (see **[`.cursor/rules/filament-inventory.mdc`](.cursor/rules/filament-inventory.mdc)** for table columns and row rules).
+- [Node.js](https://nodejs.org/) 20+
 
-- **[Node.js](https://nodejs.org/) 20+** — the **`node`** command available in your terminal (`PATH`).
-- **Once per copy of this project:** open a terminal in the project folder and run **`npm install`** so dependencies (for example **`dotenv`**) are available. After that you normally only run **`node cli.js …`**.
+## Quick start
 
-## Get started
+Your source table is **`data/amazon-filament-inventory.md`** (outputs to `data/inventory.json`). Generated files live under **`data/`** (often gitignored).
 
-Open a terminal **in this project’s folder** (where **`cli.js`** lives—the top level of the repo after you clone or copy it). If you haven’t already, complete **Prerequisites** above.
+1. `npm install`
+2. Edit **`data/amazon-filament-inventory.md`** — in Cursor, **open that file** (or @ it in Chat) so the inventory rule applies when you use AI on the table.
+3. `node main.js migrate`
+4. Copy `.env.example` to `.env` and set URLs / credentials (see below).
+5. `node main.js --sync`  
+   Bambuddy: `node main.js --sync --system bambuddy`
 
-1. **Rebuild your inventory file from the purchase table.** Whenever you’ve updated **`data/amazon-filament-inventory.md`**, run **`node cli.js migrate`**. That step only reads your table and writes the structured file Spoolman will use—**no Spoolman, no network**.
-2. **Tell the tool how to reach Spoolman.** Copy **`.env.example`** to **`.env`** in the same folder and set **`SPOOLMAN_URL`** to your server (for example **`http://192.168.1.10:7912`**). Add **user** and **password** there only if your Spoolman install uses HTTP Basic auth. You can skip **`.env`** until you’re ready to sync; **migrate** does not need it.
-3. **Sync into Spoolman.** Run **`node cli.js push`**. That sends your inventory into Spoolman—creating what’s new and updating what changed—**without deleting** stuff that exists in Spoolman but isn’t in your table.
+Add `--execute` when you want real writes and destructive cleanup. Without it, runs are a **dry run** (safe rehearsal).
 
-**Want Spoolman to match your table exactly—even if that means removing things that are only in Spoolman?** See **`reload`** below; it **empties the catalog** and **fills it again** from your inventory file. Day-to-day updates usually use **`push`** instead.
+`node main.js --help` lists flags.
 
-**Need a command list?** Run **`node cli.js --help`**.
+## CLI
 
-**Optional — [Cursor](https://cursor.com/):** **`.cursor/rules/filament-inventory.mdc`** describes the markdown table columns. Any editor works.
+| Command | Meaning |
+|--------|--------|
+| `node main.js migrate` | Table → `data/inventory.json` only |
+| `node main.js --sync` | Migrate, then push to backend (`--system spoolman` default) |
+| `node main.js --clean` | Backend cleanup (dry run unless `--execute`) |
+| `node main.js --clean --sync --execute` | Cleanup, migrate, push — all live |
 
-## Commands and parameters
+Use `--system bambuddy` for Bambuddy. Order when combining: cleanup runs first, then migrate + push if `--sync` is set.
 
-All invocations use:
+**npm shortcuts:** `npm run inventory:migrate`, `npm run spoolman:push`, `npm run bambuddy:push`, etc. — see `package.json` → `scripts`.
 
-```text
-node cli.js <command> [options...]
-```
+## Environment (`.env`)
 
-Input and output files live under **`data/`** in this project (see each command). **`.env`** must sit next to **`cli.js`**; the tool loads it even if your terminal’s current folder is somewhere else.
+| Variable | Backend | Required |
+|----------|---------|----------|
+| `SPOOLMAN_URL` | Spoolman | Yes (sync/clean) |
+| `SPOOLMAN_BASIC_USER` / `SPOOLMAN_BASIC_PASS` | Spoolman | If you use Basic auth |
+| `BAMBUDDY_URL` | Bambuddy | Yes (origin only, no `/api/v1`) |
+| `BAMBUDDY_API_KEY` | Bambuddy | Yes |
+| `LOG_LEVEL` / `DEBUG=1` | Both | Optional — `debug` logs every HTTP |
 
-### `migrate`
-
-Reads **`data/amazon-filament-inventory.md`**, writes **`data/inventory.json`**.
-
-No parameters.
-
-```bash
-node cli.js migrate
-```
-
-### `push`
-
-Creates/updates Spoolman vendors, filaments, and spools from **`data/inventory.json`**. Needs **`.env`** with **`SPOOLMAN_URL`** (and optional Basic-auth vars).
-
-No parameters.
-
-```bash
-node cli.js push
-```
-
-### `cleanup`
-
-Always targets the **entire** Spoolman instance (all spools, filaments, vendors): **dry-run** by default (counts only), **`--apply`** performs the delete.
-
-| Argument | Meaning |
-|----------|---------|
-| `--dry-run` | Preview only (**default** if you pass neither flag, or use this explicitly) |
-| `--apply` | Delete everything listed in the preview |
-
-**Examples**
-
-```bash
-node cli.js cleanup
-node cli.js cleanup --dry-run
-node cli.js cleanup --apply
-```
-
-### `reload`
-
-**Use this when you want a clean slate:** Spoolman should show **only** what’s in your inventory file—no leftover vendors, filaments, or spools from earlier imports or manual edits.
-
-**What happens, in order**
-
-1. **Everything in Spoolman is removed** (all spools, then filaments, then vendors).
-2. **Everything from your file is added again**, the same way **`push`** would—so the catalog mirrors **`data/inventory.json`** after you’ve run **`migrate`**.
-
-**Trade-off:** Anything that existed only inside Spoolman (extra tweaks, history, or items you never put in your table) **is lost**. For normal “I bought more filament” updates, **`push`** is enough and safer.
-
-```bash
-node cli.js reload
-```
-
-## Environment variables (`.env`)
-
-Used for **`push`**, **`cleanup`**, and **`reload`** only. File must sit next to **`cli.js`**.
-
-| Variable | Required | Meaning |
-|----------|----------|---------|
-| `SPOOLMAN_URL` | Yes (for those commands) | Spoolman base URL, e.g. `http://host:7912` |
-| `SPOOLMAN_BASIC_USER` | No | HTTP Basic user |
-| `SPOOLMAN_BASIC_PASS` | No | HTTP Basic password |
+Cleanup **with `--execute`** can wipe **all** data on that backend for objects this tool manages—only use it when you intend a full reset.
 
 ## License
 

@@ -3,14 +3,17 @@
  * {@link MarkdownMigrateManager}.
  */
 
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { getLogger } from "../lib/logger.js";
 import { EM_DASH } from "../models/common.js";
 import { NAME_TO_HEX } from "../models/migrate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const log = getLogger("migrate");
 
 export class MarkdownMigrateManager {
   constructor(options = {}) {
@@ -177,6 +180,66 @@ export class MarkdownMigrateManager {
     return `${vendorId}|${String(name).trim()}|${weightNetGrams}`;
   }
 
+  /** FIFO reuse of stable ids when re-running migrate (same filament + purchase order). */
+  #spoolMergeKey(spool) {
+    return `${spool.filamentId}\0${JSON.stringify(spool.purchase)}`;
+  }
+
+  /**
+   * @param {Array<{ filamentId: string; purchase: object }>} spoolsOut
+   * @param {unknown} previousDocument
+   */
+  #assignStableSpoolIds(spoolsOut, previousDocument) {
+    /** @type {Map<string, string[]>} */
+    const queues = new Map();
+    const prev = previousDocument?.spools;
+    if (Array.isArray(prev)) {
+      for (const s of prev) {
+        if (s == null || typeof s.id !== "string" || s.id.length === 0) continue;
+        if (typeof s.filamentId !== "string" || s.purchase == null) continue;
+        const key = this.#spoolMergeKey({
+          filamentId: s.filamentId,
+          purchase: s.purchase,
+        });
+        if (!queues.has(key)) queues.set(key, []);
+        queues.get(key).push(s.id);
+      }
+    }
+
+    for (const s of spoolsOut) {
+      const key = this.#spoolMergeKey(s);
+      const q = queues.get(key);
+      const reused = q != null && q.length > 0 ? q.shift() : null;
+      s.id = reused != null ? reused : randomUUID();
+    }
+  }
+
+  /**
+   * Same order + (orderId, filamentId) → `purchase.itemNumber` 1..Y, `purchase.totalQuantity` Y (§3c line key).
+   */
+  #assignSpoolCopyMeta(spoolsOut) {
+    /** @type {Map<string, number[]>} */
+    const groups = new Map();
+    for (let i = 0; i < spoolsOut.length; i++) {
+      const s = spoolsOut[i];
+      const oid = s.purchase?.orderId != null ? String(s.purchase.orderId) : "";
+      const k = `${s.filamentId}\0${oid}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(i);
+    }
+    for (const indices of groups.values()) {
+      const y = indices.length;
+      for (let j = 0; j < indices.length; j++) {
+        const s = spoolsOut[indices[j]];
+        s.purchase.itemNumber = j + 1;
+        s.purchase.totalQuantity = y;
+        delete s.copyIndex;
+        delete s.copyCount;
+        delete s.copyOf;
+      }
+    }
+  }
+
   #parseInventoryMarkdown(text) {
     const rows = [];
     let inTable = false;
@@ -216,8 +279,8 @@ export class MarkdownMigrateManager {
         inTable = true;
         headerSeen = true;
         if (cells.slice(0, expected.length).join("\0") !== expected.join("\0")) {
-          console.warn(
-            "Warning: table header differs from expected inventory markdown schema; parsing by position anyway.",
+          log.warn(
+            "table header differs from expected inventory markdown schema; parsing by position anyway",
           );
         }
         continue;
@@ -259,7 +322,7 @@ export class MarkdownMigrateManager {
     return rows;
   }
 
-  #buildCanonicalInventory(rows, sourceMarkdownPath) {
+  #buildCanonicalInventory(rows, sourceMarkdownPath, previousDocument) {
     const vendorOrder = [];
     const seenV = new Set();
     const vendorDisplayByKey = new Map();
@@ -302,6 +365,9 @@ export class MarkdownMigrateManager {
         });
       }
     }
+
+    this.#assignStableSpoolIds(spoolsOut, previousDocument);
+    this.#assignSpoolCopyMeta(spoolsOut);
 
     const vendors = vendorOrder.map((vk) => ({
       id: vk,
@@ -359,7 +425,7 @@ export class MarkdownMigrateManager {
     };
   }
 
-  async run(_argv = []) {
+  async run() {
     const markdown = join(__dirname, "..", "data", "amazon-filament-inventory.md");
     const out = join(__dirname, "..", "data", "inventory.json");
     const raw = await readFile(markdown, "utf8");
@@ -368,17 +434,24 @@ export class MarkdownMigrateManager {
       throw new Error(`No table rows parsed from ${markdown}`);
     }
 
-    const { document } = this.#buildCanonicalInventory(rows, markdown);
+    let previousDocument = null;
+    try {
+      previousDocument = JSON.parse(await readFile(out, "utf8"));
+    } catch {
+      previousDocument = null;
+    }
+
+    const { document } = this.#buildCanonicalInventory(rows, markdown, previousDocument);
 
     await mkdir(dirname(out), { recursive: true });
     await writeFile(out, JSON.stringify(document, null, 2) + "\n", "utf8");
 
-    console.log(
-      `Wrote ${out}: ${document.vendors.length} vendors, ${document.filaments.length} filaments, ${document.spools.length} spools`,
+    log.info(
+      `wrote ${out}: ${document.vendors.length} vendors, ${document.filaments.length} filaments, ${document.spools.length} spools`,
     );
     if (document.migrateNotes.skippedRows.length > 0) {
-      console.warn(
-        `Skipped ${document.migrateNotes.skippedRows.length} row(s); see migrateNotes.skippedRows in ${out}`,
+      log.warn(
+        `skipped ${document.migrateNotes.skippedRows.length} row(s); see migrateNotes.skippedRows in ${out}`,
       );
     }
 
